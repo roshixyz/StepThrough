@@ -148,7 +148,7 @@ async def receive_code(request: CodeRequest):
     
     try: 
         server_code = modify_code(code)
-        print(server_code)
+        # print(server_code)
         
         try:
             _, log_data = execute_code_from_file(server_code)
