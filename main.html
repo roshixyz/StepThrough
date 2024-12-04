@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leetcode</title>
+    <script src="https://unpkg.com/lucide@latest">
+        lucide.createIcons();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.36.1/min/vs/loader.js"></script>
+    <style>
+        #editor {
+            width: 750px;   
+            height: 670px;
+            border: 1px solid #ccc;
+        }
+        .highlighted-line {
+            background-color: rgba(42, 255, 223, 0.3);
+            border-left: 3px solid #0cffb2;
+        }   
+    </style>
+      
+</head>
+<body class="bg-gray-100">
+
+    <div class="h-screen flex p-4 bg-gray-100">
+        <!-- Left Panel -->
+        <div class="flex flex-col flex-grow mr-4">
+          <!-- Large Box -->
+          <div class="flex-grow bg-white border rounded-lg shadow-md">
+            <!-- <textarea id="code"></textarea> -->
+             <div id="editor"></div>
+          </div>
+          <!-- Buttons -->
+          <div class="flex justify-between mt-4">
+            <button class="px-8 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors" onclick="sendCode()">
+                <i data-lucide="play" class="w-4 h-4"></i>
+            </button>
+            
+            <button class="px-8 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors" onclick="resetHighlight()">
+                <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+            </button>
+            <button class="px-8 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors" onclick="lastHighlight()">
+                <i data-lucide="chevrons-right" class="w-4 h-4"></i>
+            </button>
+            <button class="px-8 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors" onclick="highlightPreviousLine()">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i>
+            </button>
+            <button class="px-8 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors" onclick="highlightNextLine()">
+                <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+      
+        <!-- Right Panel -->
+        <div class="w-1/2 flex flex-col gap-y-4">
+          <div class="overflow-auto max-h-[500px] border border-gray-300">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="sticky top-0 bg-white">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Variables</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
+                    </tr>
+                </thead>
+                <tbody id="exec-table" class="bg-white divide-y divide-gray-200">
+                </tbody>
+            </table>
+          </div>
+          <div class="overflow-auto max-h-[400px] border border-gray-300 rounded-lg">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="sticky top-0 bg-white">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sub Expressions</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
+                    </tr>
+                </thead>
+                <tbody id="sub-exp" class="bg-white divide-y divide-gray-200">
+                </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+    <script src="static/main.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            lucide.createIcons();
+        });
+
+    </script>
+</body>
+
+</html>
