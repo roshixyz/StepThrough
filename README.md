@@ -13,6 +13,9 @@ Key Features:
 - Clone the repository
 - Run the following command in the root directory of the repository
   ```
+  pip3 install -r requirements.txt
+  ```
+  ```
   python3 main.py
   ```
 - Open the browser and navigate to http://127.0.0.1:8000/
