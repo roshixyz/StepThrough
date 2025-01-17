@@ -1,138 +1,302 @@
-import inspect
-import sys
 import copy
-from functools import wraps
-import types
-import collections.abc
+import functools
+import inspect
+import json
+import os
+import re
+import sys
+import threading
+from collections import OrderedDict
 
-def should_exclude_object(obj):
-    return (
-        inspect.isgenerator(obj) or
-        inspect.isfunction(obj) or
-        inspect.isclass(obj) or
-        inspect.ismodule(obj) or
-        inspect.isbuiltin(obj) or
-        inspect.iscoroutine(obj) or
-        inspect.isawaitable(obj) or
-        inspect.isgeneratorfunction(obj) or
-        inspect.iscoroutinefunction(obj) or
-        inspect.isasyncgenfunction(obj) or
-        isinstance(obj, (
-            types.ModuleType,
-            types.CodeType,
-            types.FrameType,
-            types.TracebackType,
-            types.GeneratorType,
-            collections.abc.Iterator,
-            collections.abc.Generator
-        ))
-    )
+from cheap_repr import cheap_repr, find_repr_function, try_register_repr
 
-def create_tracer(log_data, target_function):
-    
-    call_depth = 0
+from utils import (NO_BIRDSEYE, ArgDefaultDict,
+                         _register_cheap_reprs, ensure_tuple,
+                         is_comprehension_frame, iscoroutinefunction,
+                         my_cheap_repr, no_args_decorator, pp_name_prefix,
+                         truncate_list)
 
-    def trace_function(frame, event, arg):
-        # print(inspect.getsourcelines(frame.f_code)[0])
+
+find_repr_function(str).maxparts = 100
+find_repr_function(bytes).maxparts = 100
+find_repr_function(object).maxparts = 100
+find_repr_function(int).maxparts = 999999
+cheap_repr.suppression_threshold = 999999
+
+
+
+class FrameInfo(object):
+    def __init__(self, frame):
+        self.frame = frame
+        self.local_reprs = {}
+        self.last_line_no = frame.f_lineno
+        self.comprehension_variables = OrderedDict()
+        code = frame.f_code
+        self.is_generator = code.co_flags & inspect.CO_GENERATOR
+        self.had_exception = False
         
-        func_name = frame.f_code.co_name
+        # if is_comprehension_frame(frame):
+        #     self.comprehension_type = (
+        #             re.match(r'<(\w+)comp>', code.co_name).group(1).title()
+        #             + u' comprehension'
+        #     )
+        # else:
+        #     self.comprehension_type = ''
+        # self.is_ipython_cell = (
+        #         code.co_name == '<module>' and
+        #         code.co_filename.startswith('<ipython-input-')
+        # )
+
+    # def update_variables(self, watch, watch_extras, event, whitelist):
+    #     self.last_line_no = self.frame.f_lineno
+    #     old_local_reprs = self.local_reprs
+    #     self.local_reprs = OrderedDict(
+    #         (source, my_cheap_repr(value))
+    #         for source, value in
+    #         self.get_local_reprs(watch, watch_extras, whitelist)
+    #     )
+
+    #     if self.comprehension_type:
+    #         for name, value_repr in self.local_reprs.items():
+    #             values = self.comprehension_variables.setdefault(name, [])
+    #             if not values or values[-1] != value_repr:
+    #                 values.append(value_repr)
+    #                 values[:] = truncate_list(values, 11)
+    #         if event in ('return', 'exception'):
+    #             return [
+    #                 (name, ', '.join(values))
+    #                 for name, values in self.comprehension_variables.items()
+    #             ]
+    #         else:
+    #             return []
+
+    #     variables = []
+    #     for name, value_repr in self.local_reprs.items():
+    #         if name not in old_local_reprs or old_local_reprs[name] != value_repr:
+    #             variables.append((name, value_repr))
+    #     return variables
+
+    # def get_local_reprs(self, watch, watch_extras, whitelist):
+    #     frame = self.frame
+    #     code = frame.f_code
+    #     var_names = [
+    #         key for key in frame.f_locals
+    #         if whitelist is None or key in whitelist
+    #         if not key.startswith(pp_name_prefix)
+    #     ]
+    #     vars_order = code.co_varnames + code.co_cellvars + code.co_freevars + tuple(var_names)
+    #     var_names.sort(key=vars_order.index)
+    #     result_items = [
+    #         (key, frame.f_locals[key])
+    #          for key in var_names
+    #     ]
+
+    #     for variable in watch:
+    #         result_items += sorted(variable.items(frame))
+
+    #     for source, value in result_items:
+    #         yield source, value
+    #         for extra in watch_extras:
+    #             try:
+    #                 pair = extra(source, value)
+    #             except Exception:
+    #                 pass
+    #             else:
+    #                 if pair is not None:
+    #                     assert len(pair) == 2, "Watch extra must return pair or None"
+    #                     yield pair
+
+
+thread_global = threading.local()
+internal_directories = (os.path.dirname((lambda: 0).__code__.co_filename),)
+
+
+class TracerMeta(type):
+    def __new__(mcs, *args, **kwargs):
+        result = super(TracerMeta, mcs).__new__(mcs, *args, **kwargs)
+        result.default = result()
+        return result
+
+    def __call__(cls, *args, **kwargs):
+        if no_args_decorator(args, kwargs):
+            return cls.default(args[0])
+        else:
+            return super(TracerMeta, cls).__call__(*args, **kwargs)
+
+    def __enter__(self):
+        return self.default.__enter__(context=1)
+
+    def __exit__(self, *args):
+        return self.default.__exit__(*args, context=1)
+
+
+class Tracer(metaclass=TracerMeta):
+    def __init__(
+            self,
+            depth=1,
+    ):
+        self.frame_infos = ArgDefaultDict(FrameInfo)
+        self.depth = depth
+        assert self.depth >= 1
+        self.target_codes = set()
+        self.target_frames = set()
+        self.variable_whitelist = None
+        self.last_frame = None
+        self.thread_local = {}
+        self.trace_event = {}
+        self.log_data = []
+        
+        
+
+    def __call__(self, function):
+        if iscoroutinefunction(function):
+            raise NotImplementedError("coroutines are not supported, sorry!")
+
+        self.target_codes.add(function.__code__)
+
+        @functools.wraps(function)
+        def simple_wrapper(*args, **kwargs):
+            with self:
+                result = function(*args, **kwargs)
+                return result
+
+        @functools.wraps(function)
+        def generator_wrapper(*args, **kwargs):
+            gen = function(*args, **kwargs)
+            method, incoming = gen.send, None
+            while True:
+                with self:
+                    try:
+                        outgoing = method(incoming)
+                    except StopIteration:
+                        return
+                try:
+                    method, incoming = gen.send, (yield outgoing)
+                except Exception as e:
+                    method, incoming = gen.throw, e
+
+        if inspect.isgeneratorfunction(function):
+            return generator_wrapper
+        else:
+            return simple_wrapper
+
+    def __enter__(self, context=0):
+        
+        self.thread_local = {'depth':-1}
+
+        calling_frame = sys._getframe(context + 1)
+        if not self._is_internal_frame(calling_frame):
+            calling_frame.f_trace = self.trace
+            self.target_frames.add(calling_frame)
+            self.last_frame = calling_frame
+            self.trace(calling_frame, 'enter', None)
+
+        stack = thread_global.__dict__.setdefault('original_trace_functions', [])
+        stack.append(sys.gettrace())
+        sys.settrace(self.trace)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback, context=0):
+
+        previous_trace = thread_global.original_trace_functions.pop()
+        sys.settrace(previous_trace)
+        calling_frame = sys._getframe(context + 1)
+        calling_frame.f_trace = previous_trace
+        self.trace(calling_frame, 'exit', None)
+        self.target_frames.discard(calling_frame)
+        self.frame_infos.pop(calling_frame, None)
+
+    def _is_internal_frame(self, frame):
+        return frame.f_code.co_filename.startswith(internal_directories)
+
+    def _is_traced_frame(self, frame):
+        return frame.f_code in self.target_codes or frame in self.target_frames
+
+    def trace(self, frame, event, arg):
+        if not self._is_traced_frame(frame):
+            if (
+                self.depth == 1
+                or self._is_internal_frame(frame)
+            ) and not is_comprehension_frame(frame):
+                return None
+            else:
+                candidate = frame
+                i = 0
+                while True:
+                    if is_comprehension_frame(candidate):
+                        candidate = candidate.f_back
+                        continue
+                    i += 1
+                    if self._is_traced_frame(candidate):
+                        break
+                    candidate = candidate.f_back
+                    if i >= self.depth or candidate is None or self._is_internal_frame(candidate):
+                        return None
+
+        frame_info = self.frame_infos[frame]
+        
+        if event in ('call', 'enter'):
+            self.thread_local['depth'] += 1
+            
+        elif self.last_frame and self.last_frame is not frame:
+            
+            line_no = frame_info.last_line_no
+            lines = inspect.getsourcelines(frame.f_code)[0]
+            
+            if event == 'call' and lines[self.trace_event['line_no'] - frame.f_code.co_firstlineno].strip().startswith('@'):
+                while True:
+                    line_no += 1
+                    try:
+                        if lines[self.trace_event['line_no'] - frame.f_code.co_firstlineno].strip().startswith('def'):
+                            break
+                    except IndexError:
+                        line_no = self.frame.lineno
+                        break
+                    
+            self.trace_event = {
+                'frame_info': frame_info,
+                'event': event,
+                'arg': arg,
+                'depth': self.thread_local['depth'],
+                'line_no': line_no,
+            }
+
+        if event == 'exception':
+            frame_info.had_exception = True
+
+        self.last_frame = frame
         line_no = frame.f_lineno
-        
         lines = inspect.getsourcelines(frame.f_code)[0]
         
-        # temporary fix for Counter and backtracking issue
-        if inspect.getsourcelines(frame.f_code)[1] > 100:
-            return trace_function
+        if event == 'call' and lines[line_no - frame.f_code.co_firstlineno].strip().startswith('@'):
+            while True:
+                line_no += 1
+                try:
+                    if lines[line_no - frame.f_code.co_firstlineno].strip().startswith('def'):
+                        break
+                except IndexError:
+                    line_no = self.frame.lineno
+                    break
+                
+        self.trace_event['frame_info'] = frame_info
+        self.trace_event['event'] = event
+        self.trace_event['arg'] = arg
+        self.trace_event['depth'] = self.thread_local['depth']
+        self.trace_event['line_no'] = line_no
         
-        current_line = lines[line_no - frame.f_code.co_firstlineno].strip()
-    
-        nonlocal call_depth
+        current_line = lines[self.trace_event['line_no'] - frame.f_code.co_firstlineno].strip()
+        variables = copy.deepcopy(frame.f_locals)
 
+        if event in ('return', 'exit'):
+            del self.frame_infos[frame]
+            self.thread_local['depth'] -= 1
+   
         
-        
-        if event == "call":  # Entering a function call
-            if frame.f_code is target_function.__code__:
-                call_depth += 1
-            return trace_function
+        self.log_data.append(copy.deepcopy({
+            'line_no': self.trace_event['line_no'],
+            'current_line': current_line,
+            'variables': variables,
+            'event': event,
+            'arg': arg
+        }))
 
-        elif event == "return":  # Exiting a function call
-            if frame.f_code is target_function.__code__:
-                call_depth -= 1
-            return trace_function
-        
-
-        if event == "line" and call_depth > 0:  # Only trace if inside the target function
-            
-            local_vars = {}
-            for k, v in frame.f_locals.items():
-                if k.startswith('__') or should_exclude_object(v):
-                    continue
-                    
-                if k == 'self':
-                    for attr_name, attr_value in vars(v).items():
-                        if not attr_name.startswith('__') and not should_exclude_object(attr_value):
-                            try:
-                                local_vars[f"self.{attr_name}"] = copy.deepcopy(attr_value)
-                            except:
-                                local_vars[f"self.{attr_name}"] = str(attr_value)
-                else:
-                    try:
-                        local_vars[k] = copy.deepcopy(v)
-                    except:
-                        local_vars[k] = str(v)
-        
-            
-            class_name = None
-            if 'self' in frame.f_locals:
-                class_name = frame.f_locals['self'].__class__.__name__
-            
-
-            log_entry = {
-                "line_no": line_no - 3,
-                "current_line": current_line,
-                "variables": local_vars
-            }
-            
-            if class_name:
-                log_entry["class"] = class_name
-
-            log_data.append(log_entry)
-
-        return trace_function
-
-    return trace_function
-
-def trace_execution(target):
-    if inspect.isclass(target):
-        for attr_name, attr_value in target.__dict__.items():
-            if inspect.isfunction(attr_value):
-                if attr_name == '__init__':
-                    setattr(target, attr_name, trace_init(attr_value))
-                else:
-                    setattr(target, attr_name, trace_execution(attr_value))
-        return target
-    
-    @wraps(target)
-    def wrapper(*args, **kwargs):
-        log_data = []
-        tracer = create_tracer(log_data, target)
-        sys.settrace(tracer)
-        result = target(*args, **kwargs)
-        sys.settrace(None)
-        return result, log_data
-    
-    return wrapper
-
-def trace_init(init_method):
-    @wraps(init_method)
-    def wrapper(*args, **kwargs):
-        log_data = []
-        tracer = create_tracer(log_data, init_method)
-        sys.settrace(tracer)
-        init_method(*args, **kwargs)
-        sys.settrace(None)
-
-        if args and hasattr(args[0], '__dict__'):
-            args[0].__trace_log__ = log_data
-        return None
-    return wrapper
+        return self.trace

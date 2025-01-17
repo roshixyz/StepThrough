@@ -1,18 +1,17 @@
+import json
+import os
+import re
+import sys
+import tempfile
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-import tempfile
-import os
-import sys
-import re
-import copy
 
 from pathlib import Path
-
-from expressions import LeetCodeDebugger
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -26,108 +25,98 @@ app.add_middleware(
     allow_credentials=True
 )
 
-def execute_code_from_file(code_str):
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(code_str)
-        temp_file = f.name
+def execute_temp_code(code_string):
+    current_dir = Path(os.getcwd())
     
     try:
-        dir_path = os.path.dirname(temp_file)
-        sys.path.insert(0, dir_path)
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            suffix='.py',
+            delete=False,
+            dir=current_dir
+        ) as temp_file:
+            temp_file.write(code_string)
+            temp_file.flush()
+            temp_file_path = temp_file.name
         
-        # module_name = os.path.splitext(os.path.basename(temp_file))[0]
+        try:
+            sys.path.insert(0, str(current_dir))
+            
+            with open(temp_file_path, 'r') as file:
+                code = compile(file.read(), temp_file_path, 'exec')
+                namespace = {}
+                exec(code, namespace)
+                return namespace.get('result', None)
+                
+        finally:
+            try:
+                os.unlink(temp_file_path)
+            except OSError as e:
+                print(f"Warning: Failed to delete temporary file {temp_file_path}: {e}")
+            
+            sys.path.pop(0)
+            
+    except Exception as e:
+        raise Exception(f"Error executing code: {str(e)}")
+
+
+
+def transform_code(input_code):
+    
+    has_imports = bool(re.match(r'\s*(import|from)\s+', input_code.lstrip()))
+    
+    if has_imports:
+        lines = input_code.split('\n')
         
-        with open(temp_file, 'r') as f:
-            compiled_code = compile(f.read(), temp_file, 'exec')
+        last_import_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip().startswith(('import ', 'from ')):
+                last_import_idx = i
         
-        namespace = {
-            '__file__': temp_file,
-            '__name__': '__main__'
-        }
-        exec(compiled_code, namespace)
-        
-        return namespace.get('res'), namespace.get('log_data')
-    
-    finally:
-
-        if dir_path in sys.path:
-            sys.path.remove(dir_path)
-        os.unlink(temp_file)
-
-
-
-
-def modify_code(func_str):
-    # Split the input string into lines and handle empty lines
-    lines = func_str.strip().splitlines()
-    
-    # Separate imports, function definition, and function call
-    import_lines = []
-    func_lines = []
-    current_section = 'imports'
-    
-    for line in lines:
-        stripped_line = line.strip()
-        if current_section == 'imports':
-            if stripped_line.startswith('def '):
-                current_section = 'function'
-                func_lines.append(line)
-            elif stripped_line.startswith('import ') or stripped_line.startswith('from '):
-                import_lines.append(line)
-            elif stripped_line:  # Skip empty lines between imports and function
-                current_section = 'function'
-                func_lines.append(line)
-        else:
-            func_lines.append(line)
-
-    # Extract function signature and body
-    func_signature = next(line for line in func_lines if line.strip().startswith('def '))
-    body_start = func_lines.index(func_signature) + 1
-    body = '\n'.join(func_lines[body_start:-1])
-
-    # Parse function name and parameters
-    func_name_match = re.match(r"def\s+(\w+)\((.*)\):", func_signature)
-    if not func_name_match:
-        raise ValueError("Invalid function signature", func_signature)
-    
-    func_name = func_name_match.group(1)
-
-    # Parse the function call line
-    call_line = func_lines[-1].strip()
-    call_match_with_return = re.match(r"(\w+(?:,\s*\w+)*)\s*=\s*" + rf"{func_name}\((.*)\)", call_line)
-    call_match_no_return = re.match(rf"{func_name}\((.*)\)", call_line)
-
-    if call_match_with_return:
-        return_vars = call_match_with_return.group(1)
-        call_args = call_match_with_return.group(2)
-        modified_return_vars = f"{return_vars}, log_data"
-    elif call_match_no_return:
-        call_args = call_match_no_return.group(1)
-        modified_return_vars = "res, log_data"
+        lines[last_import_idx:last_import_idx + 1] = [
+            lines[last_import_idx],
+            "",
+            "from tracer import Tracer",
+            "from utils import process_logs",
+            "",
+            "tracer_instance = Tracer()",
+        ]
+        input_code = '\n'.join(lines)
     else:
-        raise ValueError("Invalid function call format")
+        imports = [
+            "from tracer import Tracer",
+            "from utils import process_logs",
+            "",
+            "tracer_instance = Tracer()",
+            ""
+        ]
+        input_code = '\n'.join(imports) + input_code.lstrip()
+    
+    def add_decorator(match):
+        full_match = match.group(0)
+        indentation = match.group(1)
+        func_def = match.group(2)
+        
+        lines_before = input_code[:match.start()].split('\n')
+        for line in reversed(lines_before):
+            line_stripped = line.strip()
+            if line_stripped and len(line) - len(line.lstrip()) < len(indentation):
+                if line_stripped.startswith('class '):
+                    return full_match
+                break
+                
+        return f"{indentation}@tracer_instance\n{indentation}{func_def}"
 
-    # Combine everything with proper spacing and ordering
-    modified_func_str = []
+    pattern = r'([ \t]*)(def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*(?:->\s*[^:]+)?\s*:)'
     
-    # Add original imports if they exist
-    if import_lines:
-        modified_func_str.extend(import_lines)
-        modified_func_str.append("")  # Empty line after imports
+    code_with_decorators = re.sub(pattern, add_decorator, input_code)
     
-    # Add tracer import
-    modified_func_str.append("from tracer import trace_execution")
-    modified_func_str.append("")  # Empty line after tracer import
+    final_code = code_with_decorators.rstrip() + "\n\n"
+    if not any(line.strip().startswith('log_data = ') for line in code_with_decorators.split('\n')):
+        final_code += "log_data = tracer_instance.log_data\nprocess_logs(log_data)\n"
     
-    # Add decorated function
-    modified_func_str.append("@trace_execution")
-    modified_func_str.append(func_signature)
-    modified_func_str.append(body)
-    modified_func_str.append("")  # Empty line before function call
-    modified_func_str.append(f"{modified_return_vars} = {func_name}({call_args})")
-
-    return "\n".join(modified_func_str)
+    return final_code
 
 
 
@@ -147,57 +136,30 @@ async def receive_code(request: CodeRequest):
     code = request.code
     
     try: 
-        server_code = modify_code(code)
+        server_code = transform_code(code)
         # print(server_code)
         
+        lines = code.split('\n')
+        lines = [line.strip() for line in lines]
+        
         try:
-            _, log_data = execute_code_from_file(server_code)
+            execute_temp_code(server_code)
         except Exception as e:
             return {"error": str(e)}
         
-        data = []
-
-        for i in range(len(log_data)):
-            line_no = log_data[i]["line_no"]
-            prev_variables = log_data[i]["variables"]
-            exec_line = log_data[i]["current_line"]
-            exec_res = {}
-
-            if i < len(log_data) - 1:
-                exec_res = log_data[i+1]["variables"]
-            else:
-                exec_res = log_data[i]["variables"]
-
-            temp_data = {"line_no": line_no, "prev_variables": prev_variables, "exec_line": exec_line, "exec_res": exec_res}
-
-            debugger = LeetCodeDebugger()
-            results = debugger.process_line(exec_line, prev_variables)
+        with open('data.json', 'r') as json_file:
+            data = json.load(json_file)
             
-            sub_exp_line = {}
-
-            for expr, value in results:
-                sub_exp_line[str(expr)] = str(value)
-
-
-            temp_data.update({"sub_exp": sub_exp_line})
-
-            temp_data["exec_res"] = copy.deepcopy(temp_data["exec_res"])
-            temp_data["prev_variables"] = copy.deepcopy(temp_data["prev_variables"])
-
-            for key, value in temp_data["exec_res"].items():
-                temp_data["exec_res"][key] = str(value)
-            for key, value in temp_data["prev_variables"].items():
-                temp_data["prev_variables"][key] = str(value)
-
-
-            data.append(temp_data)
+            for log in data:
+                if log['exec_line'] in lines:
+                    log['line_no'] = lines.index(log['exec_line']) + 1 
+                
             
         return {"output": data}
 
             
     except Exception as e:
         return {"error": str(e)}
-
 
 
 

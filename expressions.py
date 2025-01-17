@@ -1,9 +1,9 @@
 import ast
 
-class LeetCodeDebugger(ast.NodeVisitor):
+class ExpExec(ast.NodeVisitor):
     def __init__(self):
         self.sub_expressions = []
-    
+        
     def visit_Import(self, node):
         self.sub_expressions.append(ast.unparse(node))
         self.generic_visit(node)
@@ -28,11 +28,11 @@ class LeetCodeDebugger(ast.NodeVisitor):
         self.sub_expressions.append(ast.unparse(node))
         self.generic_visit(node)
         
-    def visit_Compare(self, node):  # Handles '==', '<', etc.
+    def visit_Compare(self, node):
         self.sub_expressions.append(ast.unparse(node))
         self.generic_visit(node)
         
-    def visit_BinOp(self, node):  # Handles operations like nums[i] + nums[j]
+    def visit_BinOp(self, node):
         self.sub_expressions.append(ast.unparse(node))
         self.generic_visit(node)
         
@@ -41,12 +41,10 @@ class LeetCodeDebugger(ast.NodeVisitor):
         self.generic_visit(node)
         
     def visit_If(self, node):
-        # Handle 'if' statements by collecting the test condition
         self.sub_expressions.append(ast.unparse(node.test))
         self.generic_visit(node)
     
     def visit_For(self, node):
-        # Handle 'for' statements by collecting the loop variable
         self.sub_expressions.append(ast.unparse(node.target))
         self.generic_visit(node)
         
@@ -55,15 +53,18 @@ class LeetCodeDebugger(ast.NodeVisitor):
 
     def process_line(self, exec_line, prev_variables):
         line = exec_line.strip()
+        
+        if '@' in line or 'for' in line or 'def' in line:
+            return {}
 
         if line.endswith(':'):
             line = line[:-1]
 
-        for keyword in ['if ', 'while ', 'elif ', 'for ', 'def ']:
+        for keyword in ['if ', 'while ', 'elif ', 'for ']:
             if line.startswith(keyword):
                 line = line[len(keyword):]
                 break
-
+        
         tree = ast.parse(line)
         self.visit(tree)
 
@@ -75,7 +76,7 @@ class LeetCodeDebugger(ast.NodeVisitor):
                 result = eval(expr, {}, prev_variables)
                 results.append((expr, result))
             except Exception as e:
-                results.append((expr, f""))  # Handle errors gracefully
-
+                results.append((expr, f""))
+        
         return results
     

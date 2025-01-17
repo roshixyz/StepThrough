@@ -64,43 +64,85 @@ function updateExecResult() {
         Object.entries(execResults[currentIndex]).forEach(([key, value]) => {
             const row = `
             <tr>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${key}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${value}</td>
+                <td class="px-6 py-4 wrap-text text-sm text-gray-500">${key}</td>
+                <td class="px-6 py-4 wrap-text text-sm text-gray-500">${value}</td>
             </tr>`;
             tbody.innerHTML += row;
-    });
+        });
 
     const subExpTbody = document.querySelector('#sub-exp');
         subExpTbody.innerHTML = "";
         Object.entries(subExp[currentIndex]).forEach(([key, value]) => {
             const row = `
             <tr>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${key}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${value}</td>
+                <td class="px-6 py-4 wrap-text text-sm text-gray-500">${key}</td>
+                <td class="px-6 py-4 wrap-text text-sm text-gray-500">${value}</td>
             </tr>`;
             subExpTbody.innerHTML += row;
-    });
+        });
+        Object.entries(execResults[currentIndex]).forEach(([key, value]) => {
+            const row = `
+            <tr>
+                <td class="px-6 py-4 wrap-text text-sm text-gray-500">${key}</td>
+                <td class="px-6 py-4 wrap-text text-sm text-gray-500">${value}</td>
+            </tr>`;
+            subExpTbody.innerHTML += row;
+        });
 }
 
 require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.36.1/min/vs' } });
 
+// require(['vs/editor/editor.main'], function() {
+//     editor = monaco.editor.create(document.getElementById('editor'), {
+//         value: ``,
+//         language: 'python',
+//         minimap: { enabled: false },
+//         scrollbar: {
+//             vertical: 'hidden'
+//         },
+//         lineNumbersMinChars: 2
+//     });
+//     editor.onDidChangeModelContent(() => {
+//         // If the editor content is cleared (empty), clear highlights
+//         if (editor.getValue().trim() === "") {
+//             clearHighlight();  // Clear highlights when the editor is empty
+//         }
+//     });
+
+// });
 require(['vs/editor/editor.main'], function() {
     editor = monaco.editor.create(document.getElementById('editor'), {
         value: ``,
-        language: 'python',
+        language: 'plaintext',
         minimap: { enabled: false },
         scrollbar: {
             vertical: 'hidden'
         },
-        lineNumbersMinChars: 2
+        lineNumbersMinChars: 1,
+        glyphMargin: false,
+        fontFamily: 'monospace'
     });
-    editor.onDidChangeModelContent(() => {
-        // If the editor content is cleared (empty), clear highlights
-        if (editor.getValue().trim() === "") {
-            clearHighlight();  // Clear highlights when the editor is empty
+
+    monaco.editor.defineTheme('customTheme', {
+        base: 'vs',
+        inherit: false,
+        rules: [],
+        colors: {
+            'editor.foreground': '#000000',
+            'editor.background': '#ffffff',
+            'editor.lineHighlightBackground': '#ffffff',
+            'editorLineNumber.foreground': '#d3d3d3',
+            'editorGutter.background': '#f5f5f5'
         }
     });
 
+    monaco.editor.setTheme('customTheme');
+
+    editor.onDidChangeModelContent(() => {
+        if (editor.getValue().trim() === "") {
+            clearHighlight();
+        }
+    });
 });
 
 
@@ -125,13 +167,13 @@ async function sendCode() {
             alert(result.error);
             return;
         }
+        currentIndex = 0;
+        
         lines = result["output"].map(output => output.line_no);
         execResults = result["output"].map(output => output.exec_res);
         execLine = result["output"].map(output => output.exec_line);
         prevResults = result["output"].map(output => output.prev_variables);
-        subExp = result["output"].map(output => output.sub_exp);
-
-        // currentIndex = 0;
+        subExp = result["output"].map(output => output.sub_exp);        
 
         // console.log("Response from server:", result);
         if (lines.length > 0) {
@@ -144,4 +186,26 @@ async function sendCode() {
 }
 
 
-
+function switchTab(tabName) {
+    // Hide all content
+    document.getElementById('variables-content').classList.add('hidden');
+    document.getElementById('expressions-content').classList.add('hidden');
+    
+    // Show selected content
+    document.getElementById(`${tabName}-content`).classList.remove('hidden');
+    
+    // Update tab styles
+    document.getElementById('variables-tab').classList.remove('bg-white');
+    document.getElementById('expressions-tab').classList.remove('bg-white');
+    document.getElementById('variables-tab').classList.add('bg-gray-100');
+    document.getElementById('expressions-tab').classList.add('bg-gray-100');
+    document.getElementById('variables-tab').classList.add('text-gray-600');
+    document.getElementById('expressions-tab').classList.add('text-gray-600');
+    
+    // Highlight active tab
+    document.getElementById(`${tabName}-tab`).classList.remove('bg-gray-100', 'text-gray-600');
+    document.getElementById(`${tabName}-tab`).classList.add('bg-white');
+  }
+  
+  // Initialize with Variables tab active
+  switchTab('variables');
