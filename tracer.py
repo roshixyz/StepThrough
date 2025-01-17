@@ -8,13 +8,11 @@ import sys
 import threading
 from collections import OrderedDict
 
-from cheap_repr import cheap_repr, find_repr_function, try_register_repr
+from cheap_repr import cheap_repr, find_repr_function
 
-from utils import (NO_BIRDSEYE, ArgDefaultDict,
-                         _register_cheap_reprs, ensure_tuple,
-                         is_comprehension_frame, iscoroutinefunction,
-                         my_cheap_repr, no_args_decorator, pp_name_prefix,
-                         truncate_list)
+from utils import (ArgDefaultDict,
+                    is_comprehension_frame, iscoroutinefunction,
+                    no_args_decorator)
 
 
 find_repr_function(str).maxparts = 100
@@ -35,77 +33,6 @@ class FrameInfo(object):
         self.is_generator = code.co_flags & inspect.CO_GENERATOR
         self.had_exception = False
         
-        # if is_comprehension_frame(frame):
-        #     self.comprehension_type = (
-        #             re.match(r'<(\w+)comp>', code.co_name).group(1).title()
-        #             + u' comprehension'
-        #     )
-        # else:
-        #     self.comprehension_type = ''
-        # self.is_ipython_cell = (
-        #         code.co_name == '<module>' and
-        #         code.co_filename.startswith('<ipython-input-')
-        # )
-
-    # def update_variables(self, watch, watch_extras, event, whitelist):
-    #     self.last_line_no = self.frame.f_lineno
-    #     old_local_reprs = self.local_reprs
-    #     self.local_reprs = OrderedDict(
-    #         (source, my_cheap_repr(value))
-    #         for source, value in
-    #         self.get_local_reprs(watch, watch_extras, whitelist)
-    #     )
-
-    #     if self.comprehension_type:
-    #         for name, value_repr in self.local_reprs.items():
-    #             values = self.comprehension_variables.setdefault(name, [])
-    #             if not values or values[-1] != value_repr:
-    #                 values.append(value_repr)
-    #                 values[:] = truncate_list(values, 11)
-    #         if event in ('return', 'exception'):
-    #             return [
-    #                 (name, ', '.join(values))
-    #                 for name, values in self.comprehension_variables.items()
-    #             ]
-    #         else:
-    #             return []
-
-    #     variables = []
-    #     for name, value_repr in self.local_reprs.items():
-    #         if name not in old_local_reprs or old_local_reprs[name] != value_repr:
-    #             variables.append((name, value_repr))
-    #     return variables
-
-    # def get_local_reprs(self, watch, watch_extras, whitelist):
-    #     frame = self.frame
-    #     code = frame.f_code
-    #     var_names = [
-    #         key for key in frame.f_locals
-    #         if whitelist is None or key in whitelist
-    #         if not key.startswith(pp_name_prefix)
-    #     ]
-    #     vars_order = code.co_varnames + code.co_cellvars + code.co_freevars + tuple(var_names)
-    #     var_names.sort(key=vars_order.index)
-    #     result_items = [
-    #         (key, frame.f_locals[key])
-    #          for key in var_names
-    #     ]
-
-    #     for variable in watch:
-    #         result_items += sorted(variable.items(frame))
-
-    #     for source, value in result_items:
-    #         yield source, value
-    #         for extra in watch_extras:
-    #             try:
-    #                 pair = extra(source, value)
-    #             except Exception:
-    #                 pass
-    #             else:
-    #                 if pair is not None:
-    #                     assert len(pair) == 2, "Watch extra must return pair or None"
-    #                     yield pair
-
 
 thread_global = threading.local()
 internal_directories = (os.path.dirname((lambda: 0).__code__.co_filename),)
@@ -195,7 +122,7 @@ class Tracer(metaclass=TracerMeta):
         stack.append(sys.gettrace())
         sys.settrace(self.trace)
 
-    def __exit__(self, exc_type, exc_value, exc_traceback, context=0):
+    def __exit__(self, context=0):
 
         previous_trace = thread_global.original_trace_functions.pop()
         sys.settrace(previous_trace)
