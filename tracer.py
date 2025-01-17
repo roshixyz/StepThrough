@@ -122,7 +122,7 @@ class Tracer(metaclass=TracerMeta):
         stack.append(sys.gettrace())
         sys.settrace(self.trace)
 
-    def __exit__(self, context=0):
+    def __exit__(self, exc_type, exc_value, exc_traceback, context=0):
 
         previous_trace = thread_global.original_trace_functions.pop()
         sys.settrace(previous_trace)
