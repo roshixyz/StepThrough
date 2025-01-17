@@ -18,7 +18,7 @@ Key Features:
   ```
   $ python3 main.py
   ```
-- Open the browser and navigate to http://127.0.0.1:8000/
+- Open **main.html** in the browser.
 - Follow the given template to write your code
     ```python
     # add your imports here
