@@ -34,9 +34,3 @@ Key Features:
 
 ### TODO
 - Add support for other Python Classes
-- Add support for Recursion code
-
-
-### Limitations
-- Does not support Recursion code
-
